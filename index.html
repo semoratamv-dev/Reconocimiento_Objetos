@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Detector de Objetos - Móvil CNN AD</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Iconos Lucide -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col justify-between font-sans select-none">
+
+    <!-- Cabecera -->
+    <header class="border-b border-slate-800 bg-slate-900/80 sticky top-0 z-50 backdrop-blur py-3 px-4">
+        <div class="max-w-md mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <span class="p-1.5 bg-indigo-600 rounded-lg text-white">
+                    <i data-lucide="scan-eye" class="w-5 h-5"></i>
+                </span>
+                <div>
+                    <h1 class="text-md font-bold tracking-tight">Detector de Objetos</h1>
+                    <p class="text-[10px] text-slate-400">Móvil (COIL-100)</p>                </div>
+            </div>
+            <span id="model-status" class="px-2.5 py-0.5 text-[10px] font-semibold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                Cargando...
+            </span>
+        </div>
+    </header>
+
+    <!-- Contenido Principal optimizado para móviles -->
+    <main class="flex-1 max-w-md w-full mx-auto p-4 flex flex-col gap-4 justify-center">
+
+        <!-- Área de Cámara -->
+        <div class="w-full flex flex-col items-center">
+            <div class="relative w-full aspect-square bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 shadow-xl flex items-center justify-center">
+
+                <!-- Video Element (Crucial para iOS/Android: playsinline, autoplay, muted) -->
+                <video id="webcam" autoplay playsinline muted class="hidden w-full h-full object-cover"></video>
+
+                <!-- Canvas de procesamiento -->
+                <canvas id="canvas" width="100" height="100" class="hidden"></canvas>
+
+                <!-- Placeholder -->
+                <div id="placeholder" class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-500">
+                    <i data-lucide="camera" class="w-12 h-12 stroke-[1.5]"></i>
+                    <p class="text-xs font-medium">Cámara desactivada</p>
+                </div>
+
+                <!-- Línea de escaneo -->
+                <div id="scanner-line" class="hidden absolute top-0 left-0 w-full h-0.5 bg-gradient-to-r from-transparent via-indigo-500 to-transparent shadow-[0_0_6px_#6366f1] animate-bounce"></div>
+            </div>
+
+            <!-- Botón de control táctil grande -->
+            <div class="w-full flex gap-3 mt-4">
+                <button id="btn-encender" class="flex-1 flex items-center justify-center gap-2 py-3.5 bg-indigo-600 active:bg-indigo-700 text-white font-semibold rounded-xl transition-all shadow-md active:scale-95">
+                    <i data-lucide="video" class="w-5 h-5"></i>
+                    Iniciar Cámara
+                </button>
+                <button id="btn-apagar" class="hidden flex-1 flex items-center justify-center gap-2 py-3.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 font-semibold rounded-xl border border-rose-500/20 transition-all active:scale-95">
+                    <i data-lucide="square" class="w-5 h-5"></i>
+                    Detener
+                </button>
+            </div>
+        </div>
+
+        <!-- Indicador de Resultados (Flotante o fijo abajo) -->
+        <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-4 flex flex-col gap-3 shadow-lg">
+            <div class="flex justify-between items-center">
+                <span class="text-xs text-slate-400 font-medium uppercase tracking-wider">Predicción del Móvil</span>
+                <div id="confidence-text" class="font-mono font-bold text-sm text-indigo-400">0.0%</div>
+            </div>
+            
+            <div id="prediction-result" class="text-xl font-extrabold text-indigo-300 text-center py-1">
+                Cargando Modelo...
+            </div>
+
+            <!-- Barra de confianza compacta -->
+            <div class="w-full bg-slate-850 h-1.5 rounded-full overflow-hidden">
+                <div id="confidence-bar" class="bg-indigo-500 h-full w-0 transition-all duration-200"></div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Pie de página -->
+    <footer class="py-3 text-center text-[10px] text-slate-600">
+        Colab LocalTunnel - TensorFlow.js
+    </footer>
+
+    <script>
+        lucide.createIcons();
+
+        const video = document.getElementById('webcam');
+        const btnEncender = document.getElementById('btn-encender');
+        const btnApagar = document.getElementById('btn-apagar');
+        const placeholder = document.getElementById('placeholder');
+        const scannerLine = document.getElementById('scanner-line');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        let stream = null;
+        let model = null;
+        let predictInterval = null;
+
+        async function loadModel() {
+            const statusEl = document.getElementById('model-status');
+            const resultEl = document.getElementById('prediction-result');
+            try {
+                // Apunta a la ruta relativa del servidor web
+                model = await tf.loadLayersModel('./carpeta_salida/model.json');
+                statusEl.innerText = 'Listo';
+                statusEl.className = 'px-2.5 py-0.5 text-[10px] font-semibold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+                resultEl.innerText = 'Esperando Cámara...';
+            } catch (err) {
+                console.error(err);
+                statusEl.innerText = 'Error';
+                statusEl.className = 'px-2.5 py-0.5 text-[10px] font-semibold rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20';
+                resultEl.innerText = 'Error al cargar modelo';
+            }
+        }
+
+        btnEncender.addEventListener('click', async () => {
+            try {
+                // Configuración ideal para cámaras traseras/frontales en celulares
+                const constraints = {
+                    video: {
+                        width: { ideal: 480 },
+                        height: { ideal: 480 },
+                        facingMode: 'environment' // Intenta usar la cámara trasera por defecto
+                    },
+                    audio: false
+                };
+
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                video.classList.remove('hidden');
+                placeholder.classList.add('hidden');
+                scannerLine.classList.remove('hidden');
+
+                btnEncender.classList.add('hidden');
+                btnApagar.classList.remove('hidden');
+
+                if (model) {
+                    predictInterval = setInterval(predictFrame, 150);
+                }
+            } catch (err) {
+                alert('Error al acceder a la cámara en móvil. Verifica permisos HTTPS: ' + err.message);
+            }
+        });
+
+        btnApagar.addEventListener('click', () => {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            video.classList.add('hidden');
+            placeholder.classList.remove('hidden');
+            scannerLine.classList.add('hidden');
+
+            btnEncender.classList.remove('hidden');
+            btnApagar.classList.add('hidden');
+
+            if (predictInterval) clearInterval(predictInterval);
+
+            document.getElementById('prediction-result').innerText = 'Esperando Cámara...';
+            document.getElementById('confidence-text').innerText = '0.0%';
+            document.getElementById('confidence-bar').style.width = '0%';
+        });
+
+        async function predictFrame() {
+            if (!model || !stream) return;
+
+            // Dibujar video cuadrado adaptado
+            ctx.drawImage(video, 0, 0, 100, 100);
+            const imgData = ctx.getImageData(0, 0, 100, 100);
+
+            const tensor = tf.tidy(() => {
+                let rawTensor = tf.browser.fromPixels(imgData, 1);
+                rawTensor = rawTensor.toFloat().div(255.0);
+                return rawTensor.expandDims(0);
+            });
+
+            const prediction = await model.predict(tensor).data();
+            const confidence = prediction[0];
+            const pct = (confidence * 100).toFixed(1);
+
+            document.getElementById('confidence-text').innerText = `${pct}%`;
+            document.getElementById('confidence-bar').style.width = `${pct}%`;
+
+            const resultado = confidence > 0.5 ? "Objeto Detectado" : "Buscando...";
+            document.getElementById('prediction-result').innerText = resultado;
+
+            tensor.dispose();
+        }
+
+        loadModel();
+    </script>
+</body>
+</html>

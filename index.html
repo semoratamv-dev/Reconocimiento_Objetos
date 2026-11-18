@@ -1,220 +1,190 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Detector de Objetos - CNN AD</title>
-    <!-- Tailwind CSS para diseño moderno -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Iconos Lucide -->
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- TensorFlow.js -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101713">
+  <title>Reconocimiento de Objetos</title>
+  <style>
+    :root { color-scheme: dark; --bg:#101713; --panel:#19231d; --line:#304137; --text:#f2f5f2; --muted:#aab7ad; --accent:#b8f36b; }
+    * { box-sizing:border-box }
+    body { margin:0; min-height:100vh; padding:28px 16px; background:radial-gradient(ellipse at 50% -20%,#334b35 0,transparent 55%),var(--bg); color:var(--text); font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif }
+    main { width:min(100%,760px); margin:auto }
+    header { margin:14px 0 22px }
+    .eyebrow { color:var(--accent); font-size:.78rem; font-weight:750; letter-spacing:.14em; text-transform:uppercase }
+    h1 { margin:6px 0; font-size:clamp(2rem,7vw,3.4rem); letter-spacing:-.045em; line-height:1.05 }
+    header p,.hint { color:var(--muted) }
+    .card { padding:clamp(16px,4vw,26px); border:1px solid var(--line); border-radius:24px; background:color-mix(in srgb,var(--panel) 94%,transparent); box-shadow:0 20px 60px #0004 }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:14px }
+    button,select { min-height:46px; border:1px solid var(--line); border-radius:12px; padding:10px 16px; background:#202d24; color:var(--text); font:inherit }
+    button { cursor:pointer; font-weight:700 }
+    button.primary { border-color:var(--accent); background:var(--accent); color:#17200f }
+    button:disabled,select:disabled { cursor:not-allowed; opacity:.5 }
+    #status { min-height:25px; margin:8px 0 14px; color:var(--muted); font-size:.92rem }
+    #status.error { color:#ff9d92 }
+    .camera { display:grid; place-items:center; overflow:hidden; min-height:220px; border:1px solid var(--line); border-radius:18px; background:#080c09 }
+    video { display:block; width:100%; max-height:65vh; object-fit:cover }
+    .results { display:grid; gap:12px; margin-top:20px }
+    .result-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:5px }
+    .result-name { font-weight:700 }
+    .percent { color:var(--muted); font-variant-numeric:tabular-nums }
+    .track { height:10px; overflow:hidden; border-radius:99px; background:#0e140f }
+    .fill { width:0; height:100%; border-radius:inherit; background:linear-gradient(90deg,#8bdc46,var(--accent)); transition:width .16s ease }
+    .hint { margin:18px 2px 0; font-size:.85rem }
+    @media (max-width:480px) { body { padding:18px 12px } .actions > * { flex:1 } }
+  </style>
 </head>
-<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col justify-between font-sans">
-
-    <!-- Cabecera -->
-    <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur py-4 px-6">
-        <div class="max-w-5xl mx-auto flex items-center justify-between">
-            <div class="flex items-center gap-3">
-                <span class="p-2 bg-indigo-600 rounded-lg text-white">
-                    <i data-lucide="scan-eye"></i>
-                </span>
-                <div>
-                    <h1 class="text-xl font-bold tracking-tight">Detector de Objetos</h1>
-                    <p class="text-xs text-slate-400">Modelo Inteligente COIL-100</p>
-                </div>
-            </div>
-            <span id="model-status" class="px-3 py-1 text-xs font-semibold rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                Modelo no cargado
-            </span>
-        </div>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">Reconocimiento de objetos</div>
+      <h1>¿Qué tipo de objeto es?</h1>
+      <p>Enfoca un objeto frente a la cámara y el modelo mostrará qué clase reconoce.</p>
     </header>
+    <section class="card" aria-label="Reconocimiento por cámara">
+      <div class="actions">
+        <button class="primary" id="start-button" type="button">Activar cámara</button>
+        <button id="switch-button" type="button" disabled>Cambiar cámara</button>
+        <button id="stop-button" type="button" disabled>Detener</button>
+      </div>
+      <div id="status" role="status" aria-live="polite">Pulsa «Activar cámara» para comenzar.</div>
+      <div class="camera" id="camera-container">
+        <video id="camera" autoplay playsinline muted hidden></video>
+      </div>
+      <div class="results" id="results" aria-live="polite"></div>
+      <p class="hint">El modelo clasifica la imagen completa; no dibuja recuadros ni detecta varios objetos por separado. Para usar la cámara, abre esta página en localhost o mediante HTTPS y concede permiso cuando te lo solicite.</p>
+    </section>
+  </main>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+  <script>
+    const MODEL_URL = new URL("./modelo/model.json", window.location.href).href;
+    const METADATA_URL = new URL("./modelo/metadata.json", window.location.href).href;
+    const video = document.getElementById("camera");
+    const statusBox = document.getElementById("status");
+    const results = document.getElementById("results");
+    const startButton = document.getElementById("start-button");
+    const switchButton = document.getElementById("switch-button");
+    const stopButton = document.getElementById("stop-button");
+    let model;
+    let stream;
+    let facingMode = "environment";
+    let running = false;
+    let busy = false;
 
-    <!-- Contenido Principal -->
-    <main class="flex-1 max-w-5xl w-full mx-auto p-6 flex flex-col md:flex-row gap-8 items-center justify-center">
-        
-        <!-- Lado Izquierdo: Visualizador de Cámara -->
-        <div class="w-full md:w-2/3 flex flex-col items-center">
-            <div class="relative w-full aspect-video max-w-xl bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 shadow-2xl shadow-indigo-500/5 flex items-center justify-center">
-                
-                <!-- Video Element -->
-                <video id="webcam" autoplay playsinline class="hidden w-full h-full object-cover"></video>
-                
-                <!-- Canvas oculto para procesar imágenes (100x100 para tu CNN en escala de grises) -->
-                <canvas id="canvas" width="100" height="100" class="hidden"></canvas>
-                
-                <!-- Placeholder cuando la cámara está apagada -->
-                <div id="placeholder" class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-slate-500">
-                    <i data-lucide="video-off" class="w-16 h-16 stroke-[1.5]"></i>
-                    <p class="text-sm font-medium">La cámara está desactivada</p>
-                </div>
+    function setStatus(message, isError = false) {
+      statusBox.textContent = message;
+      statusBox.classList.toggle("error", isError);
+    }
 
-                <!-- Efecto de escaneo dinámico activo -->
-                <div id="scanner-line" class="hidden absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-indigo-500 to-transparent shadow-[0_0_8px_#6366f1] animate-bounce"></div>
-            </div>
-
-            <!-- Botones de Control -->
-            <div class="flex gap-4 mt-6">
-                <button id="btn-encender" class="flex items-center gap-2 px-5 py-3 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-semibold rounded-xl transition-all shadow-lg shadow-indigo-600/20 hover:scale-[1.02] active:scale-[0.98]">
-                    <i data-lucide="video" class="w-5 h-5"></i>
-                    Activar Cámara
-                </button>
-                <button id="btn-apagar" class="hidden flex items-center gap-2 px-5 py-3 bg-rose-600/10 hover:bg-rose-600/20 text-rose-400 font-semibold rounded-xl border border-rose-500/20 transition-all active:scale-[0.98]">
-                    <i data-lucide="square" class="w-5 h-5"></i>
-                    Desactivar
-                </button>
-            </div>
-        </div>
-
-        <!-- Lado Derecho: Panel de Predicción / Consola -->
-        <div class="w-full md:w-1/3 bg-slate-950/40 border border-slate-800/80 rounded-2xl p-6 self-stretch flex flex-col justify-between">
-            <div>
-                <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
-                    <i data-lucide="activity" class="text-indigo-400"></i>
-                    Análisis en Vivo
-                </h2>
-                
-                <div class="space-y-4">
-                    <!-- Tarjeta de Predicción -->
-                    <div class="bg-slate-900/60 p-4 rounded-xl border border-slate-800/60">
-                        <span class="text-xs text-slate-400 block mb-1">Objeto Detectado</span>
-                        <div id="prediction-result" class="text-2xl font-bold text-slate-300">--</div>
-                    </div>
-                    
-                    <!-- Tarjeta de Confianza -->
-                    <div class="bg-slate-900/60 p-4 rounded-xl border border-slate-800/60">
-                        <span class="text-xs text-slate-400 block mb-1">Confianza / Valor</span>
-                        <div class="flex items-center justify-between gap-3">
-                            <div id="confidence-text" class="font-mono font-bold text-indigo-400">0.0%</div>
-                            <div class="flex-1 bg-slate-850 h-2 rounded-full overflow-hidden">
-                                <div id="confidence-bar" class="bg-indigo-500 h-full w-0 transition-all duration-300"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="mt-6 pt-4 border-t border-slate-800/50">
-                <p class="text-xs text-slate-500 text-center leading-relaxed">
-                    La imagen capturada es redimensionada a 100x100 en escala de grises para adaptarse a la red neuronal convolucional.
-                </p>
-            </div>
-        </div>
-    </main>
-
-    <!-- Pie de página -->
-    <footer class="border-t border-slate-800/50 py-4 text-center text-xs text-slate-500">
-        Desarrollado con TensorFlow.js y Tailwind CSS
-    </footer>
-
-    <script>
-        // Inicializar iconos Lucide
-        lucide.createIcons();
-
-        const video = document.getElementById('webcam');
-        const btnEncender = document.getElementById('btn-encender');
-        const btnApagar = document.getElementById('btn-apagar');
-        const placeholder = document.getElementById('placeholder');
-        const scannerLine = document.getElementById('scanner-line');
-        const canvas = document.getElementById('canvas');
-        const ctx = canvas.getContext('2d');
-
-        let stream = null;
-        let model = null;
-        let predictInterval = null;
-
-        // Cargar el modelo de TensorFlow.js generado en el notebook
-        async function loadModel() {
-            const statusEl = document.getElementById('model-status');
-            try {
-                // Apunta a la carpeta de salida generada en Colab
-                model = await tf.loadLayersModel('./carpeta_salida/model.json');
-                statusEl.innerText = 'Modelo Cargado';
-                statusEl.className = 'px-3 py-1 text-xs font-semibold rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-            } catch (err) {
-                console.warn("No se pudo cargar el modelo automáticamente. Asegúrate de servir la carpeta 'carpeta_salida' en el mismo directorio.", err);
-                statusEl.innerText = 'Modelo no encontrado';
-                statusEl.className = 'px-3 py-1 text-xs font-semibold rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20';
-            }
+    async function loadModel() {
+      if (!model) {
+        setStatus("Cargando el modelo…");
+        model = await tmImage.load(MODEL_URL, METADATA_URL);
+        results.replaceChildren();
+        for (const label of model.getClassLabels()) {
+          const row = document.createElement("div");
+          row.className = "result";
+          const head = document.createElement("div");
+          head.className = "result-head";
+          const name = document.createElement("span");
+          name.className = "result-name";
+          name.textContent = label;
+          const percent = document.createElement("span");
+          percent.className = "percent";
+          percent.textContent = "0 %";
+          const track = document.createElement("div");
+          track.className = "track";
+          const fill = document.createElement("div");
+          fill.className = "fill";
+          track.append(fill);
+          head.append(name, percent);
+          row.append(head, track);
+          results.append(row);
         }
+      }
+    }
 
-        // Encender la cámara
-        btnEncender.addEventListener('click', async () => {
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: { width: 640, height: 480, facingMode: 'user' },
-                    audio: false
-                });
-                video.srcObject = stream;
-                video.classList.remove('hidden');
-                placeholder.classList.add('hidden');
-                scannerLine.classList.remove('hidden');
-                
-                btnEncender.classList.add('hidden');
-                btnApagar.classList.remove('hidden');
-
-                // Iniciar predicciones periódicas si el modelo está listo
-                if (model) {
-                    predictInterval = setInterval(predictFrame, 200);
-                }
-            } catch (err) {
-                alert('No se pudo acceder a la cámara: ' + err.message);
-            }
-        });
-
-        // Apagar la cámara
-        btnApagar.addEventListener('click', () => {
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-            }
-            video.classList.add('hidden');
-            placeholder.classList.remove('hidden');
-            scannerLine.classList.add('hidden');
-            
-            btnEncender.classList.remove('hidden');
-            btnApagar.classList.add('hidden');
-            
-            if (predictInterval) clearInterval(predictInterval);
-            
-            document.getElementById('prediction-result').innerText = '--';
-            document.getElementById('confidence-text').innerText = '0.0%';
-            document.getElementById('confidence-bar').style.width = '0%';
-        });
-
-        // Procesar fotograma y predecir
-        async function predictFrame() {
-            if (!model || !stream) return;
-
-            // Dibujar video en el canvas de 100x100
-            ctx.drawImage(video, 0, 0, 100, 100);
-            const imgData = ctx.getImageData(0, 0, 100, 100);
-
-            // Convertir a escala de grises y normalizar a [0, 1] en TensorFlow.js
-            const tensor = tf.tidy(() => {
-                let rawTensor = tf.browser.fromPixels(imgData, 1); // 1 canal
-                rawTensor = rawTensor.toFloat().div(255.0);
-                return rawTensor.expandDims(0); // Dimensión de lote (1, 100, 100, 1)
-            });
-
-            // Ejecutar la inferencia
-            const prediction = await model.predict(tensor).data();
-            const confidence = prediction[0];
-            
-            // Actualizar interfaz con los resultados
-            const pct = (confidence * 100).toFixed(1);
-            document.getElementById('confidence-text').innerText = `${pct}%`;
-            document.getElementById('confidence-bar').style.width = `${pct}%`;
-            
-            // Nota: Al ser una salida sigmoid (0 a 1), clasificamos el umbral en 0.5
-            const resultado = confidence > 0.5 ? "Objeto Detectado" : "Buscando...";
-            document.getElementById('prediction-result').innerText = resultado;
-
-            tensor.dispose();
+    async function startCamera() {
+      startButton.disabled = true;
+      try {
+        await loadModel();
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error("Este navegador no permite acceder a la cámara. Usa localhost o HTTPS en un navegador actualizado.");
         }
+        if (stream) stream.getTracks().forEach(track => track.stop());
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
+        video.srcObject = stream;
+        video.hidden = false;
+        await video.play();
+        running = true;
+        startButton.disabled = true;
+        switchButton.disabled = false;
+        stopButton.disabled = false;
+        setStatus("Cámara activa. Apunta al objeto que quieres reconocer.");
+        requestAnimationFrame(predictLoop);
+      } catch (error) {
+        startButton.disabled = false;
+        running = false;
+        const message = error.name === "NotAllowedError"
+          ? "No se concedió permiso para usar la cámara. Revisa los permisos del navegador y vuelve a intentarlo."
+          : error.name === "NotFoundError"
+            ? "No se encontró ninguna cámara disponible."
+            : (error.message || "No se pudo iniciar la cámara.");
+        setStatus(message, true);
+      }
+    }
 
-        // Cargar modelo al iniciar
-        loadModel();
-    </script>
+    async function predictLoop() {
+      if (!running) return;
+      if (!busy && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        busy = true;
+        try {
+          const predictions = await model.predict(video);
+          predictions.sort((a, b) => b.probability - a.probability);
+          const rows = results.children;
+          predictions.forEach((prediction, index) => {
+            const row = [...rows].find(item => item.querySelector(".result-name").textContent === prediction.className);
+            if (!row) return;
+            const percent = Math.round(prediction.probability * 100);
+            row.querySelector(".percent").textContent = `${percent} %`;
+            row.querySelector(".fill").style.width = `${percent}%`;
+          });
+        } catch (error) {
+          running = false;
+          setStatus("Se produjo un error al analizar la imagen. Puedes detener y volver a activar la cámara.", true);
+        } finally {
+          busy = false;
+        }
+      }
+      if (running) requestAnimationFrame(predictLoop);
+    }
+
+    function stopCamera() {
+      running = false;
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      stream = null;
+      video.srcObject = null;
+      video.hidden = true;
+      startButton.disabled = false;
+      switchButton.disabled = true;
+      stopButton.disabled = true;
+      setStatus("Cámara detenida. Pulsa «Activar cámara» para comenzar.");
+    }
+
+    startButton.addEventListener("click", startCamera);
+    stopButton.addEventListener("click", stopCamera);
+    switchButton.addEventListener("click", async () => {
+      facingMode = facingMode === "environment" ? "user" : "environment";
+      await startCamera();
+    });
+    window.addEventListener("pagehide", () => {
+      running = false;
+      if (stream) stream.getTracks().forEach(track => track.stop());
+    });
+  </script>
 </body>
 </html>

@@ -55,9 +55,9 @@
       <p class="hint">El modelo clasifica la imagen completa; no dibuja recuadros ni detecta varios objetos por separado. Para usar la cámara, abre esta página en localhost o mediante HTTPS y concede permiso cuando te lo solicite.</p>
     </section>
   </main>
-  <script src="https://semoratat-dev.github.io/Reconocimiento_objetos/modelo/model.json"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
-  <script>
+ <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+<script src="script.js"></script>
     const MODEL_URL = new URL("./modelo/model.json", window.location.href).href;
     const METADATA_URL = new URL("./modelo/metadata.json", window.location.href).href;
     const video = document.getElementById("camera");
